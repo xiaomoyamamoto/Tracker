@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Period Tracker">
+<title>🌸 Period Tracker</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Arial, sans-serif;
+    padding: 18px;
+    max-width: 600px;
+    margin: auto;
+    font-size: 17px;
+    background: #fff5f7;
+    color: #555;
+    padding-bottom: 40px;
+  }
+  h1,h2 { text-align:center; color:#d23669; }
+  h1 { font-size:25px; margin:10px 0 22px; }
+  h2 { font-size:22px; }
+  .page { display:none; animation:fadeIn .2s; }
+  .active-page { display:block; }
+  button, select, input {
+    margin-top:10px;
+    padding:13px;
+    width:100%;
+    font-size:16px;
+    border-radius:9px;
+    border:1px solid #ffb6c1;
+    background:#fff;
+    -webkit-appearance:none;
+  }
+  button {
+    background:#ff9fba;
+    color:white;
+    font-weight:700;
+    border:none;
+  }
+  button:active { background:#d23669; transform:scale(.99); }
+  .secondary { background:#f8a1d1; }
+  .danger { background:#d85c78; }
+  .section {
+    margin-top:20px;
+    padding:15px;
+    background:white;
+    border-radius:10px;
+    box-shadow:0 2px 8px rgba(0,0,0,.08);
+  }
+  .menu-buttons { display:flex; flex-direction:column; gap:10px; }
+  .month-selector { display:flex; gap:10px; margin-bottom:10px; }
+  .month-selector select { flex:1; }
+  table {
+    width:100%;
+    margin-top:10px;
+    border-collapse:collapse;
+    font-size:15px;
+    background:white;
+    box-shadow:0 2px 8px rgba(0,0,0,.08);
+  }
+  th { background:#ffb6c1; color:white; }
+  th,td { border:1px solid #ffd6e0; padding:9px; text-align:left; }
+  tr:nth-child(even) { background:#fff5f7; }
+  .status {
+    text-align:center;
+    font-size:14px;
+    margin:12px 0;
+    color:#777;
+  }
+  .hint {
+    font-size:14px;
+    line-height:1.5;
+    color:#777;
+    margin-top:8px;
+  }
+  .back-button { margin-top:20px; }
+  .hidden { display:none; }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+</style>
+</head>
+<body>
+<h1>🌸 Period Tracker 🌸</h1>
+
+<div id="menu" class="page active-page">
+  <div class="menu-buttons">
+    <button onclick="showPage('create')">Create Entry</button>
+    <button onclick="showPage('tracker'); displayEntries()">View Tracker</button>
+    <button onclick="showPage('delete')">Delete Entry</button>
+
+    <div class="section">
+      <button onclick="backupData()">💾 Backup Data</button>
+      <input type="file" id="restoreFile" accept=".json,application/json" onchange="restoreData(this)">
+      <div class="hint">
+        Restore your old JSON backup here. Your old backup format is supported.
+      </div>
+    </div>
+
+    <div class="section">
+      <div id="status" class="status">Checking storage…</div>
+      <div class="hint">
+        Data is saved automatically after every change. For extra safety, keep a JSON backup in the iPhone Files app.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="create" class="page">
+  <h2>Create Entry</h2>
+  <input type="date" id="entryDate">
+  <select id="flowType">
+    <option value="Spotting">Spotting</option>
+    <option value="Light Flow">Light Flow</option>
+    <option value="Heavy Flow">Heavy Flow</option>
+  </select>
+  <input type="text" id="remarks" placeholder="Remarks">
+  <button onclick="saveEntry()">Save Entry</button>
+  <button class="back-button secondary" onclick="showPage('menu')">Back to Menu</button>
+</div>
+
+<div id="tracker" class="page">
+  <h2>Tracker</h2>
+  <div class="month-selector">
+    <select id="monthSelect">
+      <option value="">All Months</option>
+      <option value="0">January</option><option value="1">February</option>
+      <option value="2">March</option><option value="3">April</option>
+      <option value="4">May</option><option value="5">June</option>
+      <option value="6">July</option><option value="7">August</option>
+      <option value="8">September</option><option value="9">October</option>
+      <option value="10">November</option><option value="11">December</option>
+    </select>
+    <select id="yearSelect"><option value="">All Years</option></select>
+  </div>
+  <button onclick="displayEntries()">Load Entries</button>
+  <table id="entriesTable">
+    <thead><tr><th>Date</th><th>Flow</th><th>Remarks</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <button class="back-button secondary" onclick="showPage('menu')">Back to Menu</button>
+</div>
+
+<div id="delete" class="page">
+  <h2>Delete Entry</h2>
+  <input type="date" id="deleteDate">
+  <button class="danger" onclick="deleteEntry()">Delete Entry</button>
+  <button class="back-button secondary" onclick="showPage('menu')">Back to Menu</button>
+</div>
+
+<script>
+const DB_NAME = "PeriodTrackerDB";
+const DB_VERSION = 1;
+const STORE_NAME = "appData";
+const DATA_KEY = "periodData";
+
+function todayString() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("IndexedDB not supported"));
+      return;
+    }
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbGet() {
+  const db = await openDB();
+  return new Promise((resolve,reject) => {
+    const tx = db.transaction(STORE_NAME,"readonly");
+    const req = tx.objectStore(STORE_NAME).get(DATA_KEY);
+    req.onsuccess = () => resolve(req.result ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbSet(data) {
+  const db = await openDB();
+  return new Promise((resolve,reject) => {
+    const tx = db.transaction(STORE_NAME,"readwrite");
+    tx.objectStore(STORE_NAME).put(data, DATA_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function oldLocalStorageGet() {
+  try {
+    return JSON.parse(localStorage.getItem(DATA_KEY) || "[]");
+  } catch(e) {
+    return [];
+  }
+}
+
+async function getData() {
+  try {
+    const dbData = await idbGet();
+    if (Array.isArray(dbData)) return dbData;
+
+    // Migrate any data from the old version of the app.
+    const oldData = oldLocalStorageGet();
+    if (Array.isArray(oldData) && oldData.length) {
+      await idbSet(oldData);
+      return oldData;
+    }
+  } catch(e) {
+    // Fall back to localStorage if IndexedDB is unavailable.
+  }
+
+  return oldLocalStorageGet();
+}
+
+async function setData(data) {
+  let saved = false;
+  try {
+    await idbSet(data);
+    saved = true;
+  } catch(e) {}
+
+  // Keep a second localStorage copy where possible.
+  try {
+    localStorage.setItem(DATA_KEY, JSON.stringify(data));
+    saved = true;
+  } catch(e) {}
+
+  updateStatus(saved ? "✓ Data saved" : "⚠️ Storage unavailable");
+  return saved;
+}
+
+function updateStatus(text) {
+  const el = document.getElementById("status");
+  if (el) el.textContent = text;
+}
+
+async function showPage(pageId) {
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active-page"));
+  document.getElementById(pageId).classList.add("active-page");
+
+  if (pageId === "create") {
+    document.getElementById("entryDate").value = todayString();
+    document.getElementById("remarks").value = "";
+  }
+  if (pageId === "delete") {
+    document.getElementById("deleteDate").value = todayString();
+  }
+  if (pageId === "tracker") {
+    await populateYearSelect();
+  }
+}
+
+async function saveEntry() {
+  const date = document.getElementById("entryDate").value;
+  const flow = document.getElementById("flowType").value;
+  const remark = document.getElementById("remarks").value.trim();
+
+  if (!date) {
+    alert("Please select a date");
+    return;
+  }
+
+  const data = await getData();
+  data.push({ date, flow, remark });
+
+  if (await setData(data)) {
+    alert("Entry saved successfully!");
+    showPage("menu");
+  } else {
+    alert("Could not save the entry on this device.");
+  }
+}
+
+async function populateYearSelect() {
+  const yearSelect = document.getElementById("yearSelect");
+  const oldValue = yearSelect.value;
+  yearSelect.innerHTML = '<option value="">All Years</option>';
+
+  const data = await getData();
+  const years = new Set();
+
+  data.forEach(entry => {
+    if (entry.date) years.add(Number(entry.date.substring(0,4)));
+  });
+
+  Array.from(years).sort((a,b)=>b-a).forEach(year => {
+    const option = document.createElement("option");
+    option.value = year;
+    option.textContent = year;
+    yearSelect.appendChild(option);
+  });
+
+  if ([...yearSelect.options].some(o => o.value === oldValue)) {
+    yearSelect.value = oldValue;
+  }
+}
+
+async function displayEntries() {
+  const selectedMonth = document.getElementById("monthSelect").value;
+  const selectedYear = document.getElementById("yearSelect").value;
+
+  let data = await getData();
+
+  data.sort((a,b) => String(a.date).localeCompare(String(b.date)));
+
+  data = data.filter(entry => {
+    if (!entry.date) return false;
+    const month = Number(entry.date.substring(5,7)) - 1;
+    const year = Number(entry.date.substring(0,4));
+    const monthMatch = selectedMonth === "" || month == selectedMonth;
+    const yearMatch = selectedYear === "" || year == selectedYear;
+    return monthMatch && yearMatch;
+  });
+
+  const tbody = document.querySelector("#entriesTable tbody");
+  tbody.innerHTML = "";
+
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No entries found</td></tr>';
+    return;
+  }
+
+  data.forEach(entry => {
+    const row = document.createElement("tr");
+    const dateCell = document.createElement("td");
+    const flowCell = document.createElement("td");
+    const remarkCell = document.createElement("td");
+
+    dateCell.textContent = entry.date;
+    flowCell.textContent = entry.flow;
+    remarkCell.textContent = entry.remark || "-";
+
+    row.append(dateCell, flowCell, remarkCell);
+    tbody.appendChild(row);
+  });
+}
+
+async function deleteEntry() {
+  const date = document.getElementById("deleteDate").value;
+  if (!date) {
+    alert("Please select a date");
+    return;
+  }
+
+  const data = await getData();
+  const newData = data.filter(entry => entry.date !== date);
+
+  if (newData.length < data.length) {
+    await setData(newData);
+    alert("Entry deleted successfully!");
+  } else {
+    alert("No entry found for the selected date.");
+  }
+  showPage("menu");
+}
+
+async function backupData() {
+  const data = await getData();
+  const json = JSON.stringify(data, null, 2);
+  const file = new File([json], "period_data_backup.json", {type:"application/json"});
+
+  // iPhone/iPad: use the native Share Sheet when available.
+  if (navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))) {
+    try {
+      await navigator.share({
+        title: "Period Tracker Backup",
+        text: "Period Tracker data backup",
+        files: [file]
+      });
+      updateStatus("✓ Backup created");
+      return;
+    } catch(e) {
+      if (e && e.name === "AbortError") return;
+    }
+  }
+
+  // Fallback for browsers that do not support file sharing.
+  const blob = new Blob([json], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "period_data_backup.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  alert("Backup file created. Please save it to Files.");
+}
+
+function restoreData(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+
+  reader.onload = async function(e) {
+    try {
+      const imported = JSON.parse(e.target.result);
+
+      if (!Array.isArray(imported)) {
+        alert("Invalid backup file format.");
+        return;
+      }
+
+      // Basic validation, while keeping compatibility with the old backup.
+      const cleaned = imported.filter(item =>
+        item &&
+        typeof item === "object" &&
+        typeof item.date === "string" &&
+        typeof item.flow === "string"
+      ).map(item => ({
+        date: item.date,
+        flow: item.flow,
+        remark: typeof item.remark === "string" ? item.remark : ""
+      }));
+
+      await setData(cleaned);
+      alert(`Data restored successfully! ${cleaned.length} entries loaded.`);
+      input.value = "";
+      await populateYearSelect();
+    } catch(err) {
+      alert("Error reading the backup file.");
+    }
+  };
+
+  reader.readAsText(file);
+}
+
+(async function init() {
+  document.getElementById("entryDate").value = todayString();
+  document.getElementById("deleteDate").value = todayString();
+
+  try {
+    const data = await getData();
+    updateStatus(`✓ ${data.length} entries stored`);
+  } catch(e) {
+    updateStatus("⚠️ Storage unavailable");
+  }
+})();
+</script>
+</body>
+</html>
